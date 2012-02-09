@@ -871,20 +871,33 @@ static void vmid_reference(struct snd_soc_codec *codec)
 {
 	struct wm8994_priv *wm8994 = snd_soc_codec_get_drvdata(codec);
 
+	pm_runtime_get_sync(codec->dev);
+
 	wm8994->vmid_refcount++;
 
 	dev_dbg(codec->dev, "Referencing VMID, refcount is now %d\n",
 		wm8994->vmid_refcount);
 
 	if (wm8994->vmid_refcount == 1) {
+		snd_soc_update_bits(codec, WM8994_ANTIPOP_1,
+				    WM8994_LINEOUT_VMID_BUF_ENA,
+				    WM8994_LINEOUT1_DISCH |
+				    WM8994_LINEOUT2_DISCH,
+				    WM8994_LINEOUT_VMID_BUF_ENA);
+
 		/* Startup bias, VMID ramp & buffer */
 		snd_soc_update_bits(codec, WM8994_ANTIPOP_2,
+				    WM8994_BIAS_SRC |
+				    WM8994_VMID_DISCH |
 				    WM8994_STARTUP_BIAS_ENA |
 				    WM8994_VMID_BUF_ENA |
 				    WM8994_VMID_RAMP_MASK,
+				    WM8994_BIAS_SRC |
 				    WM8994_STARTUP_BIAS_ENA |
 				    WM8994_VMID_BUF_ENA |
-				    (0x11 << WM8994_VMID_RAMP_SHIFT));
+				    (0x3 << WM8994_VMID_RAMP_SHIFT));
+
+		wm_hubs_vmid_ena(codec);
 
 		/* Main bias enable, VMID=2x40k */
 		snd_soc_update_bits(codec, WM8994_POWER_MANAGEMENT_1,
@@ -892,7 +905,11 @@ static void vmid_reference(struct snd_soc_codec *codec)
 				    WM8994_VMID_SEL_MASK,
 				    WM8994_BIAS_ENA | 0x2);
 
-		msleep(20);
+		msleep(50);
+
+		snd_soc_update_bits(codec, WM8994_ANTIPOP_2,
+				    WM8994_VMID_RAMP_MASK | WM8994_BIAS_SRC,
+				    0);
 	}
 }
 
@@ -922,6 +939,10 @@ static void vmid_dereference(struct snd_soc_codec *codec)
 				    WM8994_BIAS_ENA |
 				    WM8994_VMID_SEL_MASK, 0);
 
+		/* Discharge VMID */
+		snd_soc_update_bits(codec, WM8994_ANTIPOP_2,
+				    WM8994_VMID_DISCH, WM8994_VMID_DISCH);
+
 		/* Discharge line */
 		snd_soc_update_bits(codec, WM8994_ANTIPOP_1,
 				    WM8994_LINEOUT1_DISCH |
@@ -938,6 +959,8 @@ static void vmid_dereference(struct snd_soc_codec *codec)
 				    WM8994_VMID_BUF_ENA |
 				    WM8994_VMID_RAMP_MASK, 0);
 	}
+
+	pm_runtime_put(codec->dev);
 }
 
 static int vmid_event(struct snd_soc_dapm_widget *w,
@@ -2265,6 +2288,9 @@ static int wm8994_set_bias_level(struct snd_soc_codec *codec,
 		}
 		break;
 	}
+
+	wm_hubs_set_bias_level(codec, level);
+
 	codec->dapm.bias_level = level;
 
 	return 0;
